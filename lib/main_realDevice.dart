@@ -48,9 +48,9 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void initState() {
     super.initState();
-    initRenderers();
-    _connectSocket();
-    _loadDevices();
+    // initRenderers();
+    // _connectSocket();
+    // _loadDevices();
   }
 
   @override
@@ -196,6 +196,8 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   Widget build(BuildContext context) {
+    var height = MediaQuery.of(context).size.height;
+    var width = MediaQuery.of(context).size.width;
     return Scaffold(
       appBar: AppBar(
         title: Text('WebRTC Call'),
@@ -240,33 +242,93 @@ class _CallScreenState extends State<CallScreen> {
             child: Container(
               width: MediaQuery.of(context).size.width,
               color: Colors.white10,
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Container(
-                      margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
-                      decoration: BoxDecoration(color: Colors.black54),
-                      child: RTCVideoView(_localRenderer),
-                    ),
-                  ),
-                  Expanded(
-                    child: Container(
-                      margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
-                      decoration: BoxDecoration(color: Colors.black54),
-                      child: RTCVideoView(_remoteRenderer),
-                    ),
-                  ),
-                ],
-              ),
+              child: 
+                   Stack(
+                    children: [
+                       Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.black)
+                        ),
+                        child: RTCVideoView(_remoteRenderer),
+                      ),
+                      Container(
+                        margin: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.black)
+                        ),
+                        height: height/5.5,
+                        width: width/5,
+                        child: RTCVideoView(_localRenderer),
+                      ),
+                      Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Container(
+                          margin: const EdgeInsets.all(18),
+                          decoration: BoxDecoration(
+                             borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey)
+                          ),
+                          height: 75,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              Container(
+                                height: 40,
+                                width: 80,
+                                
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.green,
+                                  borderRadius: BorderRadius.circular(8)),
+                                child: Icon(Icons.video_camera_back,color: Colors.white,)),
+                                Container(
+                                height: 40,
+                                width: 80,
+                                
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.green,
+                                  borderRadius: BorderRadius.circular(8)),
+                                child: Icon(Icons.mic,color: Colors.white,)),
+                              // Icon(Icons.people_sharp),
+                              Container(
+                                height: 40,
+                                width: 80,
+                                
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.green,
+                                  borderRadius: BorderRadius.circular(8)),
+                                child: Icon(Icons.people_alt_rounded,color: Colors.white,)),
+                              Container(
+                                height: 40,
+                                width: 100,
+                                
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.red,
+                                  borderRadius: BorderRadius.circular(8)),
+                                child: Icon(Icons.phone_disabled_rounded,color: Colors.white,))
+                            ],
+                          ),
+                        ),
+                      )
+                    ],
+                  )
+                
+                
+              
             ),
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _inCalling ? _endCall : _makeCall,
-        tooltip: _inCalling ? 'End Call' : 'Start Call',
-        child: Icon(_inCalling ? Icons.call_end : Icons.phone),
-      ),
+      // floatingActionButton: FloatingActionButton(
+      //   onPressed: _inCalling ? _endCall : _makeCall,
+      //   tooltip: _inCalling ? 'End Call' : 'Start Call',
+      //   child: Icon(_inCalling ? Icons.call_end : Icons.phone),
+      // ),
     );
   }
 }
