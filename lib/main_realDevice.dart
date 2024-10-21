@@ -44,13 +44,15 @@ class _CallScreenState extends State<CallScreen> {
   List<MediaDeviceInfo> _devices = [];
   String? _selectedVideoInputId;
   String? _selectedAudioInputId;
+  bool _isFrontCamera = true;
+
 
   @override
   void initState() {
     super.initState();
-    // initRenderers();
-    // _connectSocket();
-    // _loadDevices();
+    initRenderers();
+    _connectSocket();
+    _loadDevices();
   }
 
   @override
@@ -68,36 +70,64 @@ class _CallScreenState extends State<CallScreen> {
     await _remoteRenderer.initialize();
   }
 
+  String? socketID ;
+
   void _connectSocket() {
     _socket = IO.io('http://192.168.0.123:3000', <String, dynamic>{
       'transports': ['websocket'],
       'autoConnect': false,
     });
     _socket!.connect();
-    _socket!.on('connect', (_) => log('Connected to server'));
-    _socket!.on('offer', (data) => _handleOffer(data));
-    _socket!.on('answer', (data) => _handleAnswer(data));
-    _socket!.on('ice-candidate', (data) => _handleIceCandidate(data));
-  }
+    // _socket!.emit("connection", (data) => log(data.toString(), name: "From Connection route"),);
+    _socket!.on("id", (data) {
+      log(data.toString(), name: "Socket ID recieved");
+        socketID = data.toString();
+      log(socketID.toString(), name: "Socket from Var");
+    });
 
-  Future<void> _loadDevices() async {
-    if (WebRTC.platformIsAndroid || WebRTC.platformIsIOS) {
-      await Permission.camera.request();
-      await Permission.microphone.request();
-    }
-    final devices = await navigator.mediaDevices.enumerateDevices();
-    setState(() {
-      _devices = devices;
-      _selectedVideoInputId = _devices
-          .firstWhere((d) => d.kind == 'videoinput', orElse: () => _devices.first)
-          .deviceId;
-      _selectedAudioInputId = _devices
-          .firstWhere((d) => d.kind == 'audioinput', orElse: () => _devices.first)
-          .deviceId;
+
+    _socket!.on('offer', (data) {
+      
+      _handleOffer(data);
+    });
+    _socket!.on('answer', (data) {
+      _handleAnswer(data);
+    });
+    _socket!.on('ice-candidate', (data) {
+      _handleIceCandidate(data);
     });
   }
 
-  Future<void> _createPeerConnection() async {
+Future<void> _loadDevices() async {
+  if (WebRTC.platformIsAndroid || WebRTC.platformIsIOS) {
+    await Permission.camera.request();
+    await Permission.microphone.request();
+  }
+  
+  final devices = await navigator.mediaDevices.enumerateDevices();
+  
+  String? frontCameraId;
+  String? backCameraId;
+  
+  for (var device in devices) {
+    if (device.kind == 'videoinput') {
+      if (device.label.toLowerCase().contains('front')) {
+        frontCameraId = device.deviceId;
+      } else if (device.label.toLowerCase().contains('back')) {
+        backCameraId = device.deviceId;
+      }
+    }
+  }
+  
+  setState(() {
+    _devices = devices;
+    _selectedVideoInputId = frontCameraId ?? (backCameraId ?? _devices.firstWhere((d) => d.kind == 'videoinput', orElse: () => _devices.first).deviceId);
+    _selectedAudioInputId = _devices
+        .firstWhere((d) => d.kind == 'audioinput', orElse: () => _devices.first)
+        .deviceId;
+  });
+}
+    Future<void> _createPeerConnection() async {
     if (_peerConnection != null) return;
     final config = {
       'iceServers': [
@@ -107,18 +137,7 @@ class _CallScreenState extends State<CallScreen> {
 
     _peerConnection = await createPeerConnection(config);
 
-    _localStream = await navigator.mediaDevices.getUserMedia({
-      'audio': {'deviceId': _selectedAudioInputId},
-      'video': {
-        'deviceId': _selectedVideoInputId,
-        'width': 1280,
-        'height': 720
-      }
-    });
-
-    _localStream!.getTracks().forEach((track) {
-      _peerConnection!.addTrack(track, _localStream!);
-    });
+    await _getUserMedia();
 
     _peerConnection!.onIceCandidate = (candidate) {
       _socket!.emit('ice-candidate', {
@@ -132,9 +151,76 @@ class _CallScreenState extends State<CallScreen> {
       }
     };
 
-    _localRenderer.srcObject = _localStream;
     setState(() {});
   }
+
+Future<void> _getUserMedia() async {
+  final Map<String, dynamic> mediaConstraints = {
+    'audio': {'deviceId': _selectedAudioInputId},
+    'video': {
+      'facingMode': _isFrontCamera ? 'user' : 'environment',
+      'deviceId': _selectedVideoInputId,
+      'width': 1280,
+      'height': 720
+    }
+  };
+
+  try {
+    // Stop all tracks of the previous stream
+    await _localStream?.dispose();
+    _localStream = null;
+
+    var stream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+    _localStream = stream;
+    _localRenderer.srcObject = _localStream;
+
+    // Add tracks to peer connection
+    _localStream!.getTracks().forEach((track) {
+      _peerConnection!.addTrack(track, _localStream!);
+    });
+  } catch (e) {
+    log('Error getting user media: $e');
+  }
+}
+
+ 
+void _switchCamera() async {
+  if (_localStream == null) return;
+
+  _isFrontCamera = !_isFrontCamera;
+  
+  // Reuse the logic from _loadDevices to find camera IDs
+  String? frontCameraId;
+  String? backCameraId;
+  
+  for (var device in _devices) {
+    if (device.kind == 'videoinput') {
+      if (device.label.toLowerCase().contains('front')) {
+        frontCameraId = device.deviceId;
+      } else if (device.label.toLowerCase().contains('back')) {
+        backCameraId = device.deviceId;
+      }
+    }
+  }
+  
+  // Update _selectedVideoInputId based on the new camera selection
+  _selectedVideoInputId = _isFrontCamera 
+      ? (frontCameraId ?? _selectedVideoInputId)
+      : (backCameraId ?? _selectedVideoInputId);
+
+  await _getUserMedia();
+
+  // Explicitly update the local renderer
+  _localRenderer.srcObject = _localStream;
+
+  // Replace tracks in peer connection
+  var senders = await _peerConnection!.getSenders();
+  var videoTrack = _localStream!.getVideoTracks().first;
+  var videoSender = senders.firstWhere((sender) => sender.track?.kind == 'video');
+  await videoSender.replaceTrack(videoTrack);
+
+  setState(() {});
+}
 
   void _handleOffer(dynamic data) async {
     log("handling offer");
@@ -175,6 +261,7 @@ class _CallScreenState extends State<CallScreen> {
     _socket!.emit('offer', {
       'sdp': offer.sdp,
       'type': offer.type,
+
     });
 
     setState(() {
@@ -202,6 +289,10 @@ class _CallScreenState extends State<CallScreen> {
       appBar: AppBar(
         title: Text('WebRTC Call'),
         actions: [
+           IconButton(
+            icon: Icon(_isFrontCamera ? Icons.camera_front : Icons.camera_rear),
+            onPressed: _inCalling ? _switchCamera : null,
+          ),
           PopupMenuButton<String>(
             onSelected: (deviceId) {
               setState(() => _selectedVideoInputId = deviceId);
@@ -324,11 +415,11 @@ class _CallScreenState extends State<CallScreen> {
           );
         },
       ),
-      // floatingActionButton: FloatingActionButton(
-      //   onPressed: _inCalling ? _endCall : _makeCall,
-      //   tooltip: _inCalling ? 'End Call' : 'Start Call',
-      //   child: Icon(_inCalling ? Icons.call_end : Icons.phone),
-      // ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _inCalling ? _endCall : _makeCall,
+        tooltip: _inCalling ? 'End Call' : 'Start Call',
+        child: Icon(_inCalling ? Icons.call_end : Icons.phone),
+      ),
     );
   }
 }

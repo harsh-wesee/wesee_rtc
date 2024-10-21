@@ -44,6 +44,8 @@ class _CallScreenState extends State<CallScreen> {
   List<MediaDeviceInfo> _devices = [];
   String? _selectedVideoInputId;
   String? _selectedAudioInputId;
+  bool _isFrontCamera = true;
+
 
   @override
   void initState() {
@@ -80,24 +82,36 @@ class _CallScreenState extends State<CallScreen> {
     _socket!.on('ice-candidate', (data) => _handleIceCandidate(data));
   }
 
-  Future<void> _loadDevices() async {
-    if (WebRTC.platformIsAndroid || WebRTC.platformIsIOS) {
-      await Permission.camera.request();
-      await Permission.microphone.request();
-    }
-    final devices = await navigator.mediaDevices.enumerateDevices();
-    setState(() {
-      _devices = devices;
-      _selectedVideoInputId = _devices
-          .firstWhere((d) => d.kind == 'videoinput', orElse: () => _devices.first)
-          .deviceId;
-      _selectedAudioInputId = _devices
-          .firstWhere((d) => d.kind == 'audioinput', orElse: () => _devices.first)
-          .deviceId;
-    });
+Future<void> _loadDevices() async {
+  if (WebRTC.platformIsAndroid || WebRTC.platformIsIOS) {
+    await Permission.camera.request();
+    await Permission.microphone.request();
   }
-
-  Future<void> _createPeerConnection() async {
+  
+  final devices = await navigator.mediaDevices.enumerateDevices();
+  
+  String? frontCameraId;
+  String? backCameraId;
+  
+  for (var device in devices) {
+    if (device.kind == 'videoinput') {
+      if (device.label.toLowerCase().contains('front')) {
+        frontCameraId = device.deviceId;
+      } else if (device.label.toLowerCase().contains('back')) {
+        backCameraId = device.deviceId;
+      }
+    }
+  }
+  
+  setState(() {
+    _devices = devices;
+    _selectedVideoInputId = frontCameraId ?? (backCameraId ?? _devices.firstWhere((d) => d.kind == 'videoinput', orElse: () => _devices.first).deviceId);
+    _selectedAudioInputId = _devices
+        .firstWhere((d) => d.kind == 'audioinput', orElse: () => _devices.first)
+        .deviceId;
+  });
+}
+    Future<void> _createPeerConnection() async {
     if (_peerConnection != null) return;
     final config = {
       'iceServers': [
@@ -107,18 +121,7 @@ class _CallScreenState extends State<CallScreen> {
 
     _peerConnection = await createPeerConnection(config);
 
-    _localStream = await navigator.mediaDevices.getUserMedia({
-      'audio': {'deviceId': _selectedAudioInputId},
-      'video': {
-        'deviceId': _selectedVideoInputId,
-        'width': 1280,
-        'height': 720
-      }
-    });
-
-    _localStream!.getTracks().forEach((track) {
-      _peerConnection!.addTrack(track, _localStream!);
-    });
+    await _getUserMedia();
 
     _peerConnection!.onIceCandidate = (candidate) {
       _socket!.emit('ice-candidate', {
@@ -132,13 +135,80 @@ class _CallScreenState extends State<CallScreen> {
       }
     };
 
-    _localRenderer.srcObject = _localStream;
     setState(() {});
   }
 
+Future<void> _getUserMedia() async {
+  final Map<String, dynamic> mediaConstraints = {
+    'audio': {'deviceId': _selectedAudioInputId},
+    'video': {
+      'facingMode': _isFrontCamera ? 'user' : 'environment',
+      'deviceId': _selectedVideoInputId,
+      'width': 1280,
+      'height': 720
+    }
+  };
+
+  try {
+    // Stop all tracks of the previous stream
+    await _localStream?.dispose();
+    _localStream = null;
+
+    var stream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+    _localStream = stream;
+    _localRenderer.srcObject = _localStream;
+
+    // Add tracks to peer connection
+    _localStream!.getTracks().forEach((track) {
+      _peerConnection!.addTrack(track, _localStream!);
+    });
+  } catch (e) {
+    log('Error getting user media: $e');
+  }
+}
+
+ 
+void _switchCamera() async {
+  if (_localStream == null) return;
+
+  _isFrontCamera = !_isFrontCamera;
+  
+  // Reuse the logic from _loadDevices to find camera IDs
+  String? frontCameraId;
+  String? backCameraId;
+  
+  for (var device in _devices) {
+    if (device.kind == 'videoinput') {
+      if (device.label.toLowerCase().contains('front')) {
+        frontCameraId = device.deviceId;
+      } else if (device.label.toLowerCase().contains('back')) {
+        backCameraId = device.deviceId;
+      }
+    }
+  }
+  
+  // Update _selectedVideoInputId based on the new camera selection
+  _selectedVideoInputId = _isFrontCamera 
+      ? (frontCameraId ?? _selectedVideoInputId)
+      : (backCameraId ?? _selectedVideoInputId);
+
+  await _getUserMedia();
+
+  // Explicitly update the local renderer
+  _localRenderer.srcObject = _localStream;
+
+  // Replace tracks in peer connection
+  var senders = await _peerConnection!.getSenders();
+  var videoTrack = _localStream!.getVideoTracks().first;
+  var videoSender = senders.firstWhere((sender) => sender.track?.kind == 'video');
+  await videoSender.replaceTrack(videoTrack);
+
+  setState(() {});
+}
+
   void _handleOffer(dynamic data) async {
     log("handling offer");
-    await _createPeerConnection();  
+     await _createPeerConnection();  
     await _peerConnection!.setRemoteDescription(
       RTCSessionDescription(data['sdp'], data['type']),
     );
@@ -150,7 +220,6 @@ class _CallScreenState extends State<CallScreen> {
       'sdp': answer.sdp,
       'type': answer.type,
     });
-    log("Handle function called");
   }
 
   void _handleAnswer(dynamic data) async {
@@ -186,7 +255,7 @@ class _CallScreenState extends State<CallScreen> {
   void _endCall() async {
     _localStream?.getTracks().forEach((track) => track.stop());
     await _localStream?.dispose();
-    _peerConnection = null; 
+     _peerConnection = null; 
     await _peerConnection?.close();
     _localRenderer.srcObject = null;
     _remoteRenderer.srcObject = null;
@@ -197,10 +266,16 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   Widget build(BuildContext context) {
+    var height = MediaQuery.of(context).size.height;
+    var width = MediaQuery.of(context).size.width;
     return Scaffold(
       appBar: AppBar(
         title: Text('WebRTC Call'),
         actions: [
+           IconButton(
+            icon: Icon(_isFrontCamera ? Icons.camera_front : Icons.camera_rear),
+            onPressed: _inCalling ? _switchCamera : null,
+          ),
           PopupMenuButton<String>(
             onSelected: (deviceId) {
               setState(() => _selectedVideoInputId = deviceId);
@@ -241,24 +316,84 @@ class _CallScreenState extends State<CallScreen> {
             child: Container(
               width: MediaQuery.of(context).size.width,
               color: Colors.white10,
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Container(
-                      margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
-                      decoration: BoxDecoration(color: Colors.black54),
-                      child: RTCVideoView(_localRenderer),
-                    ),
-                  ),
-                  Expanded(
-                    child: Container(
-                      margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
-                      decoration: BoxDecoration(color: Colors.black54),
-                      child: RTCVideoView(_remoteRenderer),
-                    ),
-                  ),
-                ],
-              ),
+              child: 
+                   Stack(
+                    children: [
+                       Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.black)
+                        ),
+                        child: RTCVideoView(_remoteRenderer),
+                      ),
+                      Container(
+                        margin: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.black)
+                        ),
+                        height: height/5.5,
+                        width: width/5,
+                        child: RTCVideoView(_localRenderer),
+                      ),
+                      Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Container(
+                          margin: const EdgeInsets.all(18),
+                          decoration: BoxDecoration(
+                             borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey)
+                          ),
+                          height: 75,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              Container(
+                                height: 40,
+                                width: 80,
+                                
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.green,
+                                  borderRadius: BorderRadius.circular(8)),
+                                child: Icon(Icons.video_camera_back,color: Colors.white,)),
+                                Container(
+                                height: 40,
+                                width: 80,
+                                
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.green,
+                                  borderRadius: BorderRadius.circular(8)),
+                                child: Icon(Icons.mic,color: Colors.white,)),
+                              // Icon(Icons.people_sharp),
+                              Container(
+                                height: 40,
+                                width: 80,
+                                
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.green,
+                                  borderRadius: BorderRadius.circular(8)),
+                                child: Icon(Icons.people_alt_rounded,color: Colors.white,)),
+                              Container(
+                                height: 40,
+                                width: 100,
+                                
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.red,
+                                  borderRadius: BorderRadius.circular(8)),
+                                child: Icon(Icons.phone_disabled_rounded,color: Colors.white,))
+                            ],
+                          ),
+                        ),
+                      )
+                    ],
+                  )
+                
+                
+              
             ),
           );
         },
