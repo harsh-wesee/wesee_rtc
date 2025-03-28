@@ -83,7 +83,7 @@ class _CallScreenState extends State<CallScreen> {
   }
 
 Future<void> _loadDevices() async {
-  if (WebRTC.platformIsAndroid || WebRTC.platformIsIOS) {
+  if (WebRTC.platformIsAndroid || WebRTC.platformIsIOS || WebRTC.platformIsLinux) {
     await Permission.camera.request();
     await Permission.microphone.request();
   }

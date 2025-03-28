@@ -287,7 +287,7 @@ void _switchCamera() async {
     var width = MediaQuery.of(context).size.width;
     return Scaffold(
       appBar: AppBar(
-        title: Text('WebRTC Call'),
+        title: const Text('WebRTC Call'),
         actions: [
            IconButton(
             icon: Icon(_isFrontCamera ? Icons.camera_front : Icons.camera_rear),
