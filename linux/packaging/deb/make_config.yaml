@@ -1,0 +1,41 @@
+display_name: RTC_WESEE
+package_name: rtc-wesee
+
+maintainer:
+  name: wesee
+  email: wesee@xyz.com
+
+priority: optional
+
+section: x11
+
+installed_size: 15700
+
+dependencies:
+  - mpv
+  - libnice
+  - libglib2.0-0
+  - libgstreamer1.0-0
+  - libgstreamer-plugins-base1.0-0
+  - libx11-6
+  - libatomic1
+  - libudev1
+  - libgtk-3-0
+
+essential: false
+
+
+postuninstall_scripts:
+  - echo "Sorry to see you go."
+
+keywords:
+  - video call
+  - audio call
+
+generic_name: RTC_WESEE
+
+categories:
+  - Development
+  - Utility
+
+startup_notify: true
